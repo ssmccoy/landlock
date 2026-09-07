@@ -1,0 +1,75 @@
+#!/usr/bin/env zsh
+# Landlock launcher
+#
+# Configures landrun using shorthand config files.
+#
+# Deligates to zsh path expansion so that options like * work by replicating
+# parameters. Wildcards with no matches yield zero parameters. This also means
+# optionals can be achieved i.e. `rwx /tmp/vim-mcp-server.soc[k]`, just for
+# example.
+
+XDG_CONFIG_HOME=${XDG_CONFIG_HOME:=~/.config}
+LANDLOCK_CONFIG=${LANDLOCK_CONFIG:=$XDG_CONFIG_HOME/landlock}
+
+extras=()
+
+while getopts ":c:r:w:x:ps" opt; do
+    case $opt in
+        p)
+            print_only=true
+            ;;
+        s)
+            shell_mode=true
+            ;;
+        c)
+            config=$OPTARG
+            ;;
+        r)
+            extras=(--ro $OPTARG $extras)
+            ;;
+        w)
+            extras=(--rw $OPTARG $extras)
+            ;;
+        x)
+            extras=(--rox $OPTARG $extras)
+            ;;
+        \?)
+            echo "Invalid option: -$OPTARG" >&2
+            exit 1
+            ;;
+    esac
+done
+shift $((OPTIND-1))
+
+if ( [ -z $config ] ) {
+    config=$LANDLOCK_CONFIG/$1.cfg
+}
+
+if (! [ -e $config ] ) {
+    echo "File not found: $config" >&2
+    exit -1
+}
+
+# Might be better to cat this onto a single line stripping all the `/dir/
+# entries... actually
+(eval $(sed '/^dir\>/ { s/^dir/mkdir -p/; s/$/;/; p }; d' $config))
+
+params=$(awk \
+    -v ECHO='printf "%s\n" ' \
+    -v LANDLOCK_CONFIG=$LANDLOCK_CONFIG \
+    -e '$1 == "dir" { next }' \
+    -e '{ gsub(/##*.*$/, "") }' \
+    -e '$1 == "include" { ARGV[ARGC++] = LANDLOCK_CONFIG "/" $2; next }' \
+    -e '$1 { c = ECHO $2; while ( c | getline f ) print "--" $1, f; close(c) }' \
+    -e 'BEGIN { l = split(ENVIRON["PATH"], bins, /:/); for (i=1;i<=l;i++) print "--rox", "\"" bins[i] "\"" }' \
+    $config)
+
+params=($params $extras)
+
+if ( [ -v print_only ] ) {
+    echo $params
+} elif ( [ -v shell_mode ] ) {
+    (exec eval "landrun ${(Z+n+)params} zsh")
+} else {
+    (exec eval "echo landrun ${(Z+n+)params} -- $@")
+}
