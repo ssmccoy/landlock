@@ -1,56 +1,35 @@
-===============================================================================
-Landlock - An exec-bootstrap for landrun, a tool for imposing LANDLOCK
-===============================================================================
+Landlock
+========
 
-This is a tool for imposing the `Landlock LSM`_ on a given process, based on
-a basic configuration.  ``landlock`` is a basic zsh program which either loads
-the specified configuration, or searches the ``$LANDLOCK_CONFIG`` directory
-(default ``$XDG_CONFIG_HOME/landlock``) for a configuration for the given
-process.
+``landlock`` is a zsh launcher that translates a configuration into
+``landrun`` options and executes a command with Landlock restrictions.
+It requires zsh, landrun, and a Linux kernel supporting the requested
+restrictions.
 
-Configuration Format
-===============================================================================
-The format of the configuration file is a directive-based format with
-shell-style comments. The directives are generally mapped to landrun_ options,
-with the extensions ``include`` to allow configuration file reuse and ``dir``
-to create directories.
+Installation
+------------
 
+Install scdoc to build the manual, then run ``make install`` to install beneath ``~/.local``. Use
+``make install PREFIX=/usr/local`` for a system installation, or set
+``DESTDIR`` to stage an installation. The manual is installed under
+``share/man/man1`` and the example configuration under ``share/doc/landlock``.
 
-=========================== ===================================================
-Directive
-=========================== ===================================================
-log-level                   Set logging level (error, info, debug) (default: "error") [$LANDRUN_LOG_LEVEL]
-ro                          Allow read-only access to this path
-rox                         Allow read-only access with execution to this path
-rw                          Allow read-write access to this path
-rwx                         Allow read-write access with execution to this path
-bind-tcp                    Allow binding to these TCP ports
-connect-tcp                 Allow connecting to these TCP ports
-best-effort                 Use best effort mode (fall back to less restrictive sandbox if necessary) (default: false)
-env                         Environment variables to pass to the sandboxed command (KEY=VALUE or just KEY to pass current)
-unrestricted-filesystem     Allow unrestricted filesystem access (default: false)
-unrestricted-network        Allow unrestricted network access (default: false)
-ldd                         Automatically detect and add library dependencies to --rox (default: false)
-add-exec                    Automatically add the executable path to --rox (default: false)
-=========================== ===================================================
+Usage
+-----
 
-.. _landrun: https://manpages.debian.org/testing/landrun/landrun.1.en.html
-.. _Landlock LSM: https://www.kernel.org/doc/html/v5.13/security/landlock.html
+Create ``~/.config/landlock/COMMAND.cfg`` or select a configuration explicitly::
 
-Executing
-===============================================================================
+    landlock -p -c config/claude.cfg claude
+    landlock -c config/claude.cfg claude
 
-Usage::
+``-p`` prints the command without executing landrun or creating directories.
+Configuration expansion can still execute shell commands: configuration files
+must be trusted. Arguments after the command are passed without reinterpretation.
 
-    landlock [ -p ] [ -s ] [ -c CONFIG ] [ -r DIR ] [ -w DIR ] [ -x DIR ] <command>
+The Claude example permits broad access, including execution from PATH,
+read/write/execute access to /tmp and /dev, and unrestricted networking.
+Review its permissions for your environment before using it.
 
-==== ==========================================================================
-Flag Description
-==== ==========================================================================
- -p  Print the parameters to be passed to landlock
- -s  Start a shell instead of the specified program
- -c  Parse the given configuration file instead of the discovered one
- -r  <directory> Add read permission for directory
- -w  <directory> Add read-write permission for directory
- -x  <directory> Add read-execute permission for directory
-==== ==========================================================================
+See ``man landlock`` for options, configuration syntax, and examples.
+Run ``make check`` for launcher tests; these use a substitute landrun and do not
+verify kernel enforcement.

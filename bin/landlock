@@ -1,75 +1,116 @@
 #!/usr/bin/env zsh
-# Landlock launcher
-#
-# Configures landrun using shorthand config files.
-#
-# Deligates to zsh path expansion so that options like * work by replicating
-# parameters. Wildcards with no matches yield zero parameters. This also means
-# optionals can be achieved i.e. `rwx /tmp/vim-mcp-server.soc[k]`, just for
-# example.
+# Configure landrun using trusted shell-expanded configuration files.
+emulate -R zsh
+setopt nullglob interactivecomments
 
-XDG_CONFIG_HOME=${XDG_CONFIG_HOME:=~/.config}
-LANDLOCK_CONFIG=${LANDLOCK_CONFIG:=$XDG_CONFIG_HOME/landlock}
+usage() {
+    print -r -- "Usage: landlock [-hps] [-c CONFIG] [-r DIR] [-w DIR] [-x DIR] command [args ...]"
+}
 
+fail() {
+    print -ru2 -- "landlock: $*"
+    exit 1
+}
+
+XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-$HOME/.config}
+LANDLOCK_CONFIG=${LANDLOCK_CONFIG:-$XDG_CONFIG_HOME/landlock}
+config=""
+print_only=false
+shell_mode=false
 extras=()
 
-while getopts ":c:r:w:x:ps" opt; do
+while getopts ":hc:r:w:x:ps" opt; do
     case $opt in
-        p)
-            print_only=true
-            ;;
-        s)
-            shell_mode=true
-            ;;
-        c)
-            config=$OPTARG
-            ;;
-        r)
-            extras=(--ro $OPTARG $extras)
-            ;;
-        w)
-            extras=(--rw $OPTARG $extras)
-            ;;
-        x)
-            extras=(--rox $OPTARG $extras)
-            ;;
-        \?)
-            echo "Invalid option: -$OPTARG" >&2
-            exit 1
-            ;;
+        h) usage; exit 0 ;;
+        p) print_only=true ;;
+        s) shell_mode=true ;;
+        c) config=$OPTARG ;;
+        r) extras+=(--ro "$OPTARG") ;;
+        w) extras+=(--rw "$OPTARG") ;;
+        x) extras+=(--rox "$OPTARG") ;;
+        :) fail "Option -$OPTARG requires an argument" ;;
+        \?) fail "Invalid option: -$OPTARG" ;;
     esac
 done
-shift $((OPTIND-1))
+shift $((OPTIND - 1))
 
-if ( [ -z $config ] ) {
-    config=$LANDLOCK_CONFIG/$1.cfg
-}
+if (( $# == 0 )); then
+    usage >&2
+    exit 1
+fi
 
-if (! [ -e $config ] ) {
-    echo "File not found: $config" >&2
-    exit -1
-}
+if $shell_mode; then
+    [[ -n $SHELL ]] || fail "SHELL is unset or empty"
+fi
 
-# Might be better to cat this onto a single line stripping all the `/dir/
-# entries... actually
-(eval $(sed '/^dir\>/ { s/^dir/mkdir -p/; s/$/;/; p }; d' $config))
+config=${config:-$LANDLOCK_CONFIG/${1:t}.cfg}
+[[ -f $config && -r $config ]] || fail "Cannot read configuration: $config"
 
-params=$(awk \
-    -v ECHO='printf "%s\n" ' \
-    -v LANDLOCK_CONFIG=$LANDLOCK_CONFIG \
-    -e '$1 == "dir" { next }' \
-    -e '{ gsub(/##*.*$/, "") }' \
-    -e '$1 == "include" { ARGV[ARGC++] = LANDLOCK_CONFIG "/" $2; next }' \
-    -e '$1 { c = ECHO $2; while ( c | getline f ) print "--" $1, f; close(c) }' \
-    -e 'BEGIN { l = split(ENVIRON["PATH"], bins, /:/); for (i=1;i<=l;i++) print "--rox", "\"" bins[i] "\"" }' \
-    $config)
+params=()
+directories=()
+files=("$config")
+typeset -A seen
 
-params=($params $extras)
+for directory in "${path[@]}"; do
+    params+=(--rox "${directory:-.}")
+done
 
-if ( [ -v print_only ] ) {
-    echo $params
-} elif ( [ -v shell_mode ] ) {
-    (exec landrun ${(Q)${(Z+n+)params}} -- "$SHELL")
-} else {
-    (exec landrun ${(Q)${(Z+n+)params}} -- "$@")
-}
+# Read included files after the current file, once per resolved filename.
+while (( ${#files} )); do
+    file=$files[1]
+    files[1]=()
+    file=${file:A}
+
+    [[ -n ${seen[$file]} ]] && continue
+    [[ -f $file && -r $file ]] || fail "Cannot read configuration: $file"
+    seen[$file]=1
+
+    while IFS= read -r line || [[ -n $line ]]; do
+        words=()
+
+        # Configurations are trusted zsh input; retain quoting and expansion.
+        eval "words=( $line
+        )" || fail "Invalid configuration in $file"
+
+        (( ${#words} )) || continue
+        directive=$words[1]
+        words[1]=()
+
+        case $directive in
+            include)
+                (( ${#words} == 1 )) || fail "include requires one filename in $file"
+                files+=("$LANDLOCK_CONFIG/$words[1]")
+                ;;
+            dir)
+                (( ${#words} )) && directories+=("${words[@]}")
+                ;;
+            best-effort|unrestricted-filesystem|unrestricted-network|ldd|add-exec)
+                (( ${#words} == 0 )) || fail "$directive takes no arguments in $file"
+                params+=("--$directive")
+                ;;
+            *)
+                for word in "${words[@]}"; do
+                    params+=("--$directive" "$word")
+                done
+                ;;
+        esac
+    done < "$file"
+done
+
+params+=("${extras[@]}")
+command_args=("$@")
+
+if $shell_mode; then
+    command_args=("$SHELL")
+fi
+
+if $print_only; then
+    print -r -- landrun "${(@q)params}" -- "${(@q)command_args}"
+    exit 0
+fi
+
+if (( ${#directories} )); then
+    mkdir -p -- "${directories[@]}" || fail "Cannot create configured directories"
+fi
+
+exec landrun "${params[@]}" -- "${command_args[@]}"
