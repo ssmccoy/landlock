@@ -69,7 +69,7 @@ params=($params $extras)
 if ( [ -v print_only ] ) {
     echo $params
 } elif ( [ -v shell_mode ] ) {
-    (exec eval "landrun ${(Z+n+)params} zsh")
+    (exec landrun ${(Q)${(Z+n+)params}} -- "$SHELL")
 } else {
-    (exec eval "echo landrun ${(Z+n+)params} -- $@")
+    (exec landrun ${(Q)${(Z+n+)params}} -- "$@")
 }

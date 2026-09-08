@@ -4,7 +4,7 @@ XDG_LOCAL_HOME ?= $(HOME)/.local
 
 PREFIX ?= $(XDG_LOCAL_HOME)
 
-$(PREFIX)/bin/landlock:
-	install bin/landlock $(PREFIX)/bin/landlock
+.PHONY: install
 
-install: $(PREFIX)/bin/landlock
+install:
+	install bin/landlock $(PREFIX)/bin/landlock
